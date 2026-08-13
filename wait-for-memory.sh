@@ -64,8 +64,7 @@ TICKET_STALE_SEC=$(cfg GATE_TICKET_STALE_SECONDS 120)
 POLL_SEC=$(cfg GATE_POLL_SECONDS 30)
 RESERVE_MB=$(cfg INCUS_RESERVE_MB 12288)
 MEMINFO=$(cfg GATE_MEMINFO /proc/meminfo)
-# Read now for a single config surface; consumed by the BYPASS branch below.
-# shellcheck disable=SC2034
+# Read now for a single config surface; consumed by the bypass branch below.
 MAX_OVERTAKES=$(cfg GATE_MAX_OVERTAKES 10)
 
 runner=$(cfg RUNNER_NAME "runner-$$")
@@ -221,8 +220,16 @@ case "$action" in
       if [ "$free" -ge "$need" ]; then
         if [ "$head" = "$my_ticket" ]; then
           admit=yes
+        elif [ "$head_overtakes" -lt "$MAX_OVERTAKES" ]; then
+          # Bounded overtake: keep capacity utilized while the head cannot
+          # fit, but count every bypass on the head ticket. At the cap the
+          # queue goes strict until the head is admitted, so a heavy
+          # job's extra wait is bounded by K admissions' releases.
+          admit=yes
+          head_label=$(file_field "$head" 2 unknown)
+          printf '%s %s %d\n' "$head_need" "$head_label" \
+            $(( head_overtakes + 1 )) > "$head"
         fi
-        # BYPASS: bounded-overtake branch added in a follow-up commit
       fi
 
       if [ "$admit" = yes ]; then
