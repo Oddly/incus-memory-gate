@@ -208,6 +208,9 @@ case "$action" in
         printf '%d %s 0\n' "$need" "$label" > "$my_ticket"
       fi
       gc_tickets
+      # Read reservations before committed on purpose: any job missing from the
+      # reservation sum is already counted as committed. Swapping these two reads
+      # reintroduces the conversion over-admit race.
       reserved=$(gc_and_sum_reservations)
       committed=$(committed_mb)
       free=$(( total - RESERVE_MB - committed - reserved ))
