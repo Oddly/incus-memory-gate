@@ -1,0 +1,76 @@
+---
+name: 'Incus memory gate'
+description: >-
+  Memory admission gate for CI jobs sharing one incus host: a
+  committed-limits ledger, a FIFO queue with bounded overtakes, and
+  fail-fast semantics.
+inputs:
+  mode:
+    description: 'acquire or release'
+    required: true
+  need-mb:
+    description: 'memory to reserve in MB (exclusive with molecule-scenario)'
+    default: ''
+  molecule-scenario:
+    description: >-
+      derive the need by summing memory_mb over the platforms in
+      molecule/<scenario>/molecule.yml in the workspace
+    default: ''
+  label:
+    description: 'diagnostic label for the reservation (defaults to the scenario name)'
+    default: ''
+  deadline-seconds:
+    description: 'acquire deadline in seconds (script default 2700)'
+    default: ''
+  incus-host:
+    description: 'host queried for running containers (required for acquire)'
+    default: ''
+  ssh-key:
+    description: 'path to the SSH key used for the incus query'
+    default: ''
+  reserve-mb:
+    description: 'MB reserved for host OS/runners/incusd (script default 12288)'
+    default: ''
+  max-overtakes:
+    description: 'bypasses a queue head tolerates before the queue goes strict (script default 10)'
+    default: ''
+  gate-dir:
+    description: 'shared gate state directory (script default /tmp/molecule-gate)'
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INCUS_HOST: ${{ inputs.incus-host }}
+        MOLECULE_SSH_KEY: ${{ inputs.ssh-key }}
+        INCUS_RESERVE_MB: ${{ inputs.reserve-mb }}
+        GATE_MAX_OVERTAKES: ${{ inputs.max-overtakes }}
+        MOLECULE_GATE_DIR: ${{ inputs.gate-dir }}
+      run: |
+        set -euo pipefail
+        case "${{ inputs.mode }}" in
+          acquire)
+            args=()
+            if [ -n "${{ inputs.need-mb }}" ]; then
+              args+=(--need-mb "${{ inputs.need-mb }}")
+            fi
+            if [ -n "${{ inputs.molecule-scenario }}" ]; then
+              args+=(--molecule-scenario "${{ inputs.molecule-scenario }}")
+            fi
+            if [ -n "${{ inputs.label }}" ]; then
+              args+=(--label "${{ inputs.label }}")
+            fi
+            if [ -n "${{ inputs.deadline-seconds }}" ]; then
+              args+=(--deadline "${{ inputs.deadline-seconds }}")
+            fi
+            bash "${{ github.action_path }}/wait-for-memory.sh" acquire "${args[@]}"
+            ;;
+          release)
+            bash "${{ github.action_path }}/wait-for-memory.sh" release
+            ;;
+          *)
+            echo "unknown mode: ${{ inputs.mode }}" >&2
+            exit 2
+            ;;
+        esac
