@@ -186,6 +186,13 @@ case "$action" in
 
     total=$(mem_total_mb)
     my_ticket="$GATE_DIR/q.$(printf '%010d' "$(date +%s)").${runner}"
+    # An abnormal exit (e.g. committed_mb/derive_need_mb aborting under set -e)
+    # must not strand our ticket at the lexical head of the FIFO, where it
+    # would block every waiter until stale-GC reclaims it. The unlink is
+    # atomic, safe without the lock, and a harmless no-op on the ADMITTED and
+    # STARVED paths (both already remove the ticket). It must not touch the
+    # reservation file: an admitted job's r.<runner> lives on by design.
+    trap 'rm -f "$my_ticket"' EXIT
 
     printf 'molecule-gate[%s]: acquire label=%s need=%dMB total=%dMB reserve=%dMB timeout=%ds\n' \
       "$runner" "$label" "$need" "$total" "$RESERVE_MB" "$timeout_s"
