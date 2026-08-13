@@ -1,0 +1,35 @@
+---
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate_tests:
+    # The suite is hermetic (fake meminfo, fake incus query, tmpdir gate
+    # state) — no incus and no self-hosted runner needed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install PyYAML
+        run: python3 -m pip install --user pyyaml
+
+      - name: Run gate tests
+        run: bash tests/run-tests.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Shellcheck the tests
+        run: shellcheck tests/*.sh
