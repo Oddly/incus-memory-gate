@@ -1,82 +1,99 @@
 # incus-memory-gate
 
-## What it is
+A memory admission gate for CI jobs that share one incus host.
 
-This is a memory admission gate for CI jobs that share a single incus host. When several
-jobs each launch containers on the same machine, the danger is not that any one of them is
-too large, but that enough of them start at once to exceed physical memory and drive the
-host into the OOM killer. The gate serialises admission so that the sum of everything
-running stays within a safe budget. A job asks to be admitted for some number of megabytes,
-waits until there is room, and only then launches its containers.
+Here's the problem it solves. Several jobs each spin up containers on the same
+machine. No single job is too big, but if enough of them start at once they run
+past physical memory and the OOM killer starts shooting processes. The gate
+serialises admission so the sum of everything running stays inside a budget. A
+job asks for some number of megabytes, waits until there's room, then launches.
 
-The budget is expressed in committed limits rather than observed free memory. Before it
-admits a job the gate computes `free = MemTotal - reserve - committed - reservations`, where
-`committed` is the sum of `limits.memory` over the running incus containers, `reservations`
-is the memory promised to jobs that have been admitted but have not launched their
-containers yet, and `reserve` is a fixed allowance held back for the host OS, the runners
-and incusd. A job is admitted only when `free >= my_need`. We count committed limits, not
-`MemAvailable`, on purpose. incus applies `limits.memory` as a hard cgroup cap, so a
-container can never use more than its declared limit. That makes `Σ limits ≤ MemTotal −
-reserve` a genuine no-OOM guarantee that holds regardless of how much memory the containers
-happen to be touching at any given instant, whereas a gate that watched `MemAvailable` would
-admit against memory that admitted-but-idle jobs are about to claim and would oscillate with
-transient usage. The gate is deliberately fail-fast: when a job cannot be admitted within its
-deadline it exits non-zero rather than forcing its way in, on the principle that a starved job
-is an explicit, retryable failure and never an OOM risk.
+## How the budget is computed
 
-## Queue policy
+Before it admits a job the gate works out
 
-Waiters are ordered by FIFO tickets, one per runner, timestamped when the job first asks to
-be admitted. Strict FIFO alone wastes capacity: if the job at the head of the queue is large
-and does not fit, every smaller job behind it would block too, even when there is room for
-them. So the queue allows bounded overtakes. A waiter that fits may bypass a blocked head,
-and each bypass is counted against the head's ticket. Once the head has been overtaken
-`GATE_MAX_OVERTAKES` times (default 10) the queue goes strict: no further overtakes are
-allowed until the head is finally admitted. This keeps the host busy while a heavy job waits,
-but bounds that job's extra wait to at most K admissions' worth of releases, so it cannot be
-starved indefinitely.
+    free = MemTotal - reserve - committed - reservations
 
-At the deadline the gate emits a verdict line to stderr and exits 1. The line reports the
-job's queue position, the head's need and overtake count, and the committed, reserved and
-free figures at the moment it gave up, so a starved job leaves behind exactly the numbers you
-need to understand why it did not fit.
+and admits when `free >= my_need`. The three moving parts:
 
-## Usage as an action
+- `committed` is the sum of `limits.memory` over the containers incus currently
+  reports as running.
+- `reservations` is memory promised to jobs that have been admitted but haven't
+  launched their containers yet.
+- `reserve` is a flat allowance held back for the host OS, the runners and
+  incusd (`INCUS_RESERVE_MB`, default 12288 MB).
 
-The action is published as a composite GitHub Action. Acquire memory before you launch, and
-release it when the job finishes. Pin the action to a full commit SHA and note the tag it
-corresponds to in a trailing comment, which is the convention this repository expects:
+The choice that matters is counting committed limits instead of `MemAvailable`.
+incus enforces `limits.memory` as a hard cgroup cap, so a container physically
+cannot use more than its declared limit. That makes `Σ limits ≤ MemTotal −
+reserve` a real no-OOM guarantee, and it holds no matter how much memory the
+containers are actually touching at any given moment. A gate watching
+`MemAvailable` would happily admit against memory that an admitted-but-idle job
+is about to claim, and it would flap around with transient usage. We'd rather be
+conservative and right.
+
+When a job can't get in before its deadline the gate gives up and exits
+non-zero instead of forcing its way in. A starved job is an explicit, retryable
+failure; barging in is an OOM risk. We take the failure every time.
+
+## The queue
+
+Waiters get FIFO tickets, one per runner, stamped when the job first asks.
+Strict FIFO on its own wastes the host: if the job at the head is large and
+doesn't fit, every smaller job behind it waits too, even when there's room for
+them.
+
+So the head can be overtaken, but only so often. A waiter that fits may bypass a
+blocked head, and each bypass is tallied against the head's ticket. After
+`GATE_MAX_OVERTAKES` bypasses (default 10) the queue goes strict — no more
+overtakes until the head is finally admitted. The host stays busy while a heavy
+job waits, and that job's extra wait is bounded to at most K admissions' worth
+of releases, so it can't be starved forever.
+
+At the deadline the gate prints a verdict line to stderr and exits 1. It reports
+the job's queue position, the head's need and overtake count, and the committed,
+reserved and free figures at the moment it gave up. That's enough to see why it
+didn't fit without re-running anything.
+
+## Using it as an action
+
+It's published as a composite GitHub Action. Acquire before you launch, release
+when the job ends. Pin to a full commit SHA and leave the tag it maps to in a
+trailing comment — that's the convention this repo expects:
 
 ```yaml
 - name: Reserve memory
-  uses: Oddly/incus-memory-gate@<full-sha> # v1.0.0
+  uses: Oddly/incus-memory-gate@ce1c0240b0076db36b0b5b7c439690a7076d9de7 # v1.0.1
   with:
     mode: acquire
     molecule-scenario: es_kibana
     incus-host: incus-ci.example
     ssh-key: ${{ steps.ssh.outputs.key-path }}
 
-# ... launch containers and run the job ...
+# ... launch containers, run the job ...
 
 - name: Release memory
   if: always()
-  uses: Oddly/incus-memory-gate@<full-sha> # v1.0.0
+  uses: Oddly/incus-memory-gate@ce1c0240b0076db36b0b5b7c439690a7076d9de7 # v1.0.1
   with:
     mode: release
 ```
 
-Give the acquire step either `molecule-scenario`, to derive the need from a molecule
-scenario in the workspace, or `need-mb` to state the megabytes directly. The release step
-takes no size input; it clears whatever this runner holds, and running it under `if: always()`
-ensures the reservation is freed even when the job fails. The action's inputs map directly
-onto the script's flags and environment: `need-mb`, `molecule-scenario`, `label` and
-`deadline-seconds` become the corresponding `acquire` flags, while `incus-host`, `ssh-key`,
-`reserve-mb`, `max-overtakes` and `gate-dir` are passed through as environment variables. Any
-input left empty is treated as unset, so the script's own defaults apply.
+Give the acquire step either `molecule-scenario`, to derive the need from a
+molecule scenario in the workspace, or `need-mb` to state the megabytes yourself.
+Release takes no size input — it clears whatever this runner holds, and
+`if: always()` makes sure that happens even when the job fails.
 
-## Usage as a plain script
+The inputs map straight onto the script. `need-mb`, `molecule-scenario`, `label`
+and `deadline-seconds` become `acquire` flags; `incus-host`, `ssh-key`,
+`reserve-mb`, `max-overtakes` and `gate-dir` are passed through as environment
+variables. An empty input is treated as unset, so the script's own defaults
+apply.
 
-The action is a thin wrapper over `wait-for-memory.sh`, which you can run directly:
+## Using it as a plain script
+
+The action is a thin wrapper over `wait-for-memory.sh`, which you can run
+directly:
 
 ```
 wait-for-memory.sh acquire --need-mb <MB> [--label <name>] [--deadline <s>]
@@ -84,26 +101,28 @@ wait-for-memory.sh acquire --molecule-scenario <name> [--label <name>] [--deadli
 wait-for-memory.sh release
 ```
 
-Exactly one of `--need-mb` or `--molecule-scenario` is required for an acquire. In scenario
-mode the need is the sum of `memory_mb` over the platforms in `molecule/<name>/molecule.yml`
-relative to the working directory, with `${VAR:-default}` references resolved from the
-environment first, and the label defaults to the scenario name. The deadline defaults to 2700
-seconds. The host to query and everything else come from the environment described below.
+An acquire needs exactly one of `--need-mb` or `--molecule-scenario`. In scenario
+mode the need is the sum of `memory_mb` over the platforms in
+`molecule/<name>/molecule.yml` (relative to the working directory), with
+`${VAR:-default}` references resolved from the environment first, and the label
+defaults to the scenario name. The deadline defaults to 2700 seconds. The host to
+query and everything else come from the environment below.
 
-## The conversion contract
+## Converting a reservation into committed memory
 
-A reservation is a promise of memory made before the containers exist; committed limits are
-the real memory of containers that are running. The gate bridges the two with a file. When a
-job is admitted the script writes a reservation file `r.<runner>` into the gate directory
-whose single line is `<need_mb> <label>`, and that reservation counts against `free` for
-everyone who computes the budget after it. The reservation must be deleted the moment the
-containers are launched, because from that point the same memory is already counted as
-`committed` through the containers' `limits.memory`, and leaving the reservation in place
-would double-count it.
+A reservation is a promise of memory made before the containers exist; committed
+limits are the real memory of containers that are already running. The gate
+bridges the two with a file. When a job is admitted the script writes a
+reservation file `r.<runner>` into the gate directory whose single line is
+`<need_mb> <label>`, and that reservation counts against `free` for everyone who
+computes the budget after it.
 
-Deleting the reservation is the consumer's responsibility. Inside the `flock`'d launch
-section, immediately after all the `incus launch` calls have returned, remove the file for
-this runner:
+You have to delete the reservation the moment the containers are up. From then on
+the same memory is already counted as `committed` through the containers'
+`limits.memory`, so leaving the reservation in place double-counts it. Deleting
+it is the consumer's job — the gate has no way to know when your `incus launch`
+calls have returned. Inside your `flock`'d launch section, right after the last
+one:
 
 ```bash
 # inside the flock'd launch section, after all `incus launch` calls:
@@ -112,13 +131,18 @@ if [ -n "$RUNNER_NAME" ]; then
 fi
 ```
 
-From then on the job is accounted for by its running containers, and the later `release` call
-is a harmless no-op against the already-deleted reservation.
+That path is the default gate directory. If you've overridden `gate-dir` (or
+`MOLECULE_GATE_DIR`), point the `rm` at the same place — otherwise the
+reservation lives on and you under-count free memory until it's garbage
+collected. After the delete the job is accounted for by its running containers,
+and the later `release` call is a harmless no-op against a reservation that's
+already gone.
 
 ## Environment reference
 
-An empty value counts as unset, because a composite action passes all of its inputs through
-unconditionally and relies on the script to fall back to these defaults.
+An empty value counts as unset. A composite action passes all of its inputs
+through whether you set them or not, so the script reads empty as "use the
+default."
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -130,27 +154,30 @@ unconditionally and relies on the script to fall back to these defaults.
 | `INCUS_DEFAULT_MEMORY_MB` | `4096` | Per-platform memory assumed when a molecule platform declares no `memory_mb`. |
 | `MOLECULE_GATE_TTL` | `3600` | Age in seconds at which a stale reservation is garbage-collected. |
 | `GATE_TICKET_STALE_SECONDS` | `120` | Age in seconds at which a stale queue ticket is garbage-collected. |
-| `GATE_MAX_OVERTAKES` | `10` | Number of bypasses a blocked queue head tolerates before the queue goes strict. |
+| `GATE_MAX_OVERTAKES` | `10` | Bypasses a blocked queue head tolerates before the queue goes strict. |
 | `GATE_MEMINFO` | `/proc/meminfo` | Source of `MemTotal`; a test hook. |
 | `GATE_INCUS_QUERY` | (none) | Command that emits `incus list -f json`, replacing the SSH query; a test hook. |
 | `GATE_POLL_SECONDS` | `30` | Interval between admission attempts while waiting; a test hook. |
 
 ## Requirements
 
-The gate host must be Linux; the script relies on `flock` and GNU `stat`. The runner needs
-`bash`, `flock`, `python3` and PyYAML, the last of which parses the molecule scenario in
-scenario mode. Querying committed limits needs SSH root access to the incus host named by
-`INCUS_HOST`, or you can bypass SSH entirely by setting `GATE_INCUS_QUERY` to any command
-that prints `incus list -f json`.
+The gate host has to be Linux — the script leans on `flock` and GNU `stat`. Each
+runner needs `bash`, `flock`, `python3` and PyYAML, the last of which only
+matters in scenario mode, where it parses the molecule file. Reading committed
+limits needs SSH root on the incus host named by `INCUS_HOST`. If you'd rather
+not go through SSH, set `GATE_INCUS_QUERY` to any command that prints
+`incus list -f json` and the gate uses that instead.
 
 ## Testing
 
-The suite is hermetic and Linux-only; on a Linux machine run it with `bash tests/run-tests.sh`.
-It stubs `MemTotal`, the incus query and the poll interval, so no real incus host is involved
-and each test runs against a throwaway gate directory. The cases cover need derivation from
-molecule scenarios and `limits.memory` unit parsing, fail-fast on a blocked acquire with the
-verdict line and ticket cleanup, foreign reservations counting against free, the blind-admit
-refusal when no host is configured, the reservation and ticket lifecycle including TTL
-garbage collection, the FIFO base case and bounded-overtake queue behaviour up to the strict
-cap, stale-ticket reclamation, and a concurrency stress test in which many workers race for a
-fixed budget and each verifies under the lock that the committed sum never exceeds it.
+The suite is hermetic and Linux-only. On a Linux machine, run
+`bash tests/run-tests.sh`. It stubs `MemTotal`, the incus query and the poll
+interval, so there's no real incus host in the loop and every test runs against a
+throwaway gate directory. The cases cover need derivation from molecule scenarios
+and `limits.memory` unit parsing, fail-fast on a blocked acquire with the verdict
+line and ticket cleanup, foreign reservations counting against free, the refusal
+to admit when no host is configured, the reservation and ticket lifecycle
+including TTL garbage collection, the FIFO base case and bounded-overtake queue
+behaviour up to the strict cap, stale-ticket reclamation, and a concurrency
+stress test where many workers race for a fixed budget and each verifies under
+the lock that the committed sum never exceeds it.
