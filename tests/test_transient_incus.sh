@@ -8,7 +8,8 @@
 #
 # This differs from the persistent-failure case (test_admission.sh #9,
 # GATE_INCUS_QUERY=false) which must still refuse to admit.
-. "$(dirname "$0")/helpers.sh"
+# shellcheck source=tests/helpers.sh disable=SC1091
+source "$(dirname "$0")/helpers.sh"
 
 setup
 set_mem_total 10240
