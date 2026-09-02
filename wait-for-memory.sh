@@ -93,7 +93,18 @@ incus_query() {
 }
 
 committed_mb() {
-  incus_query | python3 -c '
+  # Retry the query so a transient incus blip doesn't fail the gate. incusd
+  # restarts (e.g. the host's twice-daily cert renewal runs `systemctl restart
+  # incus`) leave a ~3s window where `incus list -f json` emits
+  #   Error: Failed to begin transaction: sql: database is closed
+  # instead of JSON. Empty or non-JSON output -> wait and retry. A *persistent*
+  # failure still returns non-zero after the retries, so the caller refuses to
+  # admit blind rather than treating an unreadable host as empty.
+  local out result attempt=0
+  local max="${GATE_QUERY_RETRIES:-6}" delay="${GATE_QUERY_RETRY_DELAY:-2}"
+  while :; do
+    attempt=$(( attempt + 1 ))
+    if out=$(incus_query 2>/dev/null) && [ -n "$out" ] && result=$(printf '%s' "$out" | python3 -c '
 import json, re, sys
 total = 0
 for c in json.load(sys.stdin):
@@ -107,7 +118,16 @@ for c in json.load(sys.stdin):
             val *= 1024
         total += val
 print(total)
-'
+' 2>/dev/null); then
+      printf '%s\n' "$result"
+      return 0
+    fi
+    if [ "$attempt" -ge "$max" ]; then
+      echo "committed_mb: incus query returned no valid JSON after $attempt attempts (incus daemon may be restarting)" >&2
+      return 1
+    fi
+    sleep "$delay"
+  done
 }
 
 derive_need_mb() {  # $1 = scenario name; resolves molecule/<name>/molecule.yml from CWD

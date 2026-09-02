@@ -71,7 +71,7 @@ rm -f "$MOLECULE_GATE_DIR/r.other"
 
 # 9. incus query failure -> refuse to admit, non-zero exit; no ticket stranded
 make_scenario small2 1024
-if GATE_INCUS_QUERY=false run_gate r8 acquire --molecule-scenario small2 --deadline 1 >/dev/null 2>&1; then
+if GATE_INCUS_QUERY=false GATE_QUERY_RETRY_DELAY=0.05 run_gate r8 acquire --molecule-scenario small2 --deadline 1 >/dev/null 2>&1; then
   echo "admitted blind on query failure"; exit 1
 fi
 if compgen -G "$MOLECULE_GATE_DIR/q.*" >/dev/null; then echo "ticket stranded on query failure"; exit 1; fi
