@@ -157,6 +157,8 @@ default."
 | `GATE_MAX_OVERTAKES` | `10` | Bypasses a blocked queue head tolerates before the queue goes strict. |
 | `GATE_MEMINFO` | `/proc/meminfo` | Source of `MemTotal`; a test hook. |
 | `GATE_INCUS_QUERY` | (none) | Command that emits `incus list -f json`, replacing the SSH query; a test hook. |
+| `GATE_QUERY_RETRIES` | `6` | Attempts to read committed limits before giving up, so a restarting incusd doesn't fail the gate. |
+| `GATE_QUERY_RETRY_DELAY` | `2` | Seconds between those attempts. |
 | `GATE_POLL_SECONDS` | `30` | Interval between admission attempts while waiting; a test hook. |
 
 ## Requirements
