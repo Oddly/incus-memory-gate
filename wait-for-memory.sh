@@ -104,7 +104,9 @@ incus_query() {
     esac
     ssh_args=(
       -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
       -o BatchMode=yes
+      -o IdentitiesOnly=yes
       -o "ConnectTimeout=${connect_timeout}"
       -o ConnectionAttempts=1
       -o ServerAliveInterval=3
