@@ -28,6 +28,12 @@ inputs:
   ssh-key:
     description: 'path to the SSH key used for the incus query'
     default: ''
+  ssh-timeout-seconds:
+    description: 'maximum duration of one SSH query in seconds (script default 15)'
+    default: ''
+  ssh-connect-timeout-seconds:
+    description: 'TCP connection timeout for the SSH query in seconds (script default 5)'
+    default: ''
   reserve-mb:
     description: 'MB reserved for host OS/runners/incusd (script default 12288)'
     default: ''
@@ -52,6 +58,8 @@ runs:
         GATE_DEADLINE_SECONDS: ${{ inputs.deadline-seconds }}
         INCUS_HOST: ${{ inputs.incus-host }}
         MOLECULE_SSH_KEY: ${{ inputs.ssh-key }}
+        GATE_SSH_TIMEOUT_SECONDS: ${{ inputs.ssh-timeout-seconds }}
+        GATE_SSH_CONNECT_TIMEOUT_SECONDS: ${{ inputs.ssh-connect-timeout-seconds }}
         INCUS_RESERVE_MB: ${{ inputs.reserve-mb }}
         GATE_MAX_OVERTAKES: ${{ inputs.max-overtakes }}
         MOLECULE_GATE_DIR: ${{ inputs.gate-dir }}
