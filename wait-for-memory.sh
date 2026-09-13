@@ -42,6 +42,8 @@
 #   GATE_MAX_OVERTAKES        bypasses a head tolerates, default 10
 #   GATE_MEMINFO              test hook, default /proc/meminfo
 #   GATE_INCUS_QUERY          test hook: command emitting `incus list -f json`
+#   GATE_SSH_TIMEOUT_SECONDS  maximum SSH query duration, default 15
+#   GATE_SSH_CONNECT_TIMEOUT_SECONDS TCP connect timeout, default 5
 #   GATE_POLL_SECONDS         test hook, default 30
 
 set -euo pipefail
@@ -78,17 +80,44 @@ incus_query() {
   if [ -n "$q" ]; then
     $q
   else
-    local host key
+    local host key ssh_timeout connect_timeout
+    local -a ssh_args
     host=$(cfg INCUS_HOST "")
     key=$(cfg MOLECULE_SSH_KEY "")
+    ssh_timeout=$(cfg GATE_SSH_TIMEOUT_SECONDS 15)
+    connect_timeout=$(cfg GATE_SSH_CONNECT_TIMEOUT_SECONDS 5)
     [ -n "$host" ] || {
       echo "INCUS_HOST or GATE_INCUS_QUERY must be set - refusing to admit blind" >&2
       return 1
     }
-    # shellcheck disable=SC2086
-    ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
-      ${key:+-i "$key"} \
-      "root@${host}" -- incus list -f json --project default < /dev/null
+    case "$ssh_timeout" in
+      ''|*[!0-9]*|0)
+        echo "GATE_SSH_TIMEOUT_SECONDS must be a positive integer" >&2
+        return 2
+        ;;
+    esac
+    case "$connect_timeout" in
+      ''|*[!0-9]*|0)
+        echo "GATE_SSH_CONNECT_TIMEOUT_SECONDS must be a positive integer" >&2
+        return 2
+        ;;
+    esac
+    ssh_args=(
+      -o StrictHostKeyChecking=no
+      -o BatchMode=yes
+      -o "ConnectTimeout=${connect_timeout}"
+      -o ConnectionAttempts=1
+      -o ServerAliveInterval=3
+      -o ServerAliveCountMax=1
+    )
+    if [ -n "$key" ]; then
+      ssh_args+=(-i "$key")
+    fi
+    # Keep an unreachable or wedged incus host from holding the gate lock
+    # indefinitely. The SSH keepalive settings cover a stalled connection;
+    # timeout also covers a hung SSH client before it establishes one.
+    timeout --signal=TERM --kill-after=2s "${ssh_timeout}s" \
+      ssh "${ssh_args[@]}" "root@${host}" -- incus list -f json --project default < /dev/null
   fi
 }
 

@@ -86,9 +86,12 @@ Release takes no size input — it clears whatever this runner holds, and
 
 The inputs map straight onto the script. `need-mb`, `molecule-scenario`, `label`
 and `deadline-seconds` become `acquire` flags; `incus-host`, `ssh-key`,
-`reserve-mb`, `max-overtakes` and `gate-dir` are passed through as environment
-variables. An empty input is treated as unset, so the script's own defaults
-apply.
+`ssh-timeout-seconds`, `ssh-connect-timeout-seconds`, `reserve-mb`,
+`max-overtakes` and `gate-dir` are passed through as environment variables. An
+empty input is treated as unset, so the script's own defaults apply. Each SSH
+query is bounded by `ssh-timeout-seconds` (15 seconds by default), and its TCP
+connection attempt is bounded by `ssh-connect-timeout-seconds` (5 seconds by
+default).
 
 ## Using it as a plain script
 
@@ -157,14 +160,16 @@ default."
 | `GATE_MAX_OVERTAKES` | `10` | Bypasses a blocked queue head tolerates before the queue goes strict. |
 | `GATE_MEMINFO` | `/proc/meminfo` | Source of `MemTotal`; a test hook. |
 | `GATE_INCUS_QUERY` | (none) | Command that emits `incus list -f json`, replacing the SSH query; a test hook. |
+| `GATE_SSH_TIMEOUT_SECONDS` | `15` | Maximum duration of one SSH query, including a stalled connection. |
+| `GATE_SSH_CONNECT_TIMEOUT_SECONDS` | `5` | TCP connection timeout passed to SSH. |
 | `GATE_QUERY_RETRIES` | `6` | Attempts to read committed limits before giving up, so a restarting incusd doesn't fail the gate. |
 | `GATE_QUERY_RETRY_DELAY` | `2` | Seconds between those attempts. |
 | `GATE_POLL_SECONDS` | `30` | Interval between admission attempts while waiting; a test hook. |
 
 ## Requirements
 
-The gate host has to be Linux — the script leans on `flock` and GNU `stat`. Each
-runner needs `bash`, `flock`, `python3` and PyYAML, the last of which only
+The gate host has to be Linux — the script leans on `flock`, GNU `stat` and GNU
+`timeout`. Each runner needs `bash`, `flock`, `python3` and PyYAML, the last of which only
 matters in scenario mode, where it parses the molecule file. Reading committed
 limits needs SSH root on the incus host named by `INCUS_HOST`. If you'd rather
 not go through SSH, set `GATE_INCUS_QUERY` to any command that prints
