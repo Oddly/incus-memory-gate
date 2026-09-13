@@ -8,6 +8,14 @@ make_scenario small 1024
 
 cat > "$T/ssh" <<'STUB'
 #!/usr/bin/env bash
+has_known_hosts=no
+has_identities_only=no
+for arg in "$@"; do
+  [ "$arg" = "UserKnownHostsFile=/dev/null" ] && has_known_hosts=yes
+  [ "$arg" = "IdentitiesOnly=yes" ] && has_identities_only=yes
+done
+[ "$has_known_hosts" = yes ] || { echo "missing isolated known-hosts option" >&2; exit 1; }
+[ "$has_identities_only" = yes ] || { echo "missing identities-only option" >&2; exit 1; }
 exec sleep 30
 STUB
 chmod +x "$T/ssh"

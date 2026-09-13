@@ -171,7 +171,9 @@ default."
 The gate host has to be Linux — the script leans on `flock`, GNU `stat` and GNU
 `timeout`. Each runner needs `bash`, `flock`, `python3` and PyYAML, the last of which only
 matters in scenario mode, where it parses the molecule file. Reading committed
-limits needs SSH root on the incus host named by `INCUS_HOST`. If you'd rather
+limits needs SSH root on the incus host named by `INCUS_HOST`. The query uses
+only `MOLECULE_SSH_KEY` and skips the shared runner known-hosts file; host-key
+verification is already disabled for this CI-only connection. If you'd rather
 not go through SSH, set `GATE_INCUS_QUERY` to any command that prints
 `incus list -f json` and the gate uses that instead.
 
