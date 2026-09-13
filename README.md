@@ -63,7 +63,7 @@ trailing comment — that's the convention this repo expects:
 
 ```yaml
 - name: Reserve memory
-  uses: Oddly/incus-memory-gate@ce1c0240b0076db36b0b5b7c439690a7076d9de7 # v1.0.1
+  uses: Oddly/incus-memory-gate@54fb1036cce8ab32e68104f9896e72322723dae2 # v1.0.3
   with:
     mode: acquire
     molecule-scenario: es_kibana
@@ -74,7 +74,7 @@ trailing comment — that's the convention this repo expects:
 
 - name: Release memory
   if: always()
-  uses: Oddly/incus-memory-gate@ce1c0240b0076db36b0b5b7c439690a7076d9de7 # v1.0.1
+  uses: Oddly/incus-memory-gate@54fb1036cce8ab32e68104f9896e72322723dae2 # v1.0.3
   with:
     mode: release
 ```
